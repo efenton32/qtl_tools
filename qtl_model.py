@@ -1,7 +1,7 @@
 import numpy as np
 import time
 import numpy.linalg as linalg
-import qr_test as qr
+import qr_tools as qr
 
 import matplotlib.pyplot as plt
 
