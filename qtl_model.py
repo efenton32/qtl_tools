@@ -7,71 +7,81 @@ import matplotlib.pyplot as plt
 
 class QTL_model:
 
-    def __init__(self):
-        pass
+    def __init__(self, pheno, geno, names = None):
+        """
+        Initializes a QTL model
 
-    def run(self, pheno, geno, num_qtl = 20, b_plots = False, names = False, path = None):
-        self.num_env = len(pheno)   # The number of environments
-        self.N = []                 # The number of lineages per environment
-        self.dots = []              # This will store magnitudes of the genotype vectors
-        self.b_plots = b_plots      # Boolean describing whether to plot intermediate steps
-        self.path = path            # Save path, only necessary if b_plots = True
-        self.S = [[] for i in range(num_qtl + 1)]        # Stores the MSE in every environment at every step
-        self.S_tot = [[] for i in range(num_qtl + 1)]    # Stores the total MSE across environments at every step
-        self.step = 0               # Counts what step of the QTL search we're on
+        Parameters:
+            pheno [numpy array]: Array of phenotypic data. Shape (# envs, # lineages)
+            geno [numpy array]: Array of genotype data. Shape (# lineages, # SNPs)
+            names [list of str]: Environment names, optional
+        """
+        if geno.shape[0] != pheno.shape[1]:
+            raise ValueError("First dim of genotypes and 2nd dim of phenotypes must match")
+        self.pheno = pheno
+        self.N = geno.shape[0]
+        self.L = geno.shape[1]
+        self.num_env = self.pheno.shape[0]
+        
+        if np.min(geno) > 0:
+            # Make genotypes between -1 and 1 if they're given 0~1
+            geno = geno * 2 - 1
+        self.geno = np.hstack( [geno, np.ones((self.N, 1))] )
+        del geno
 
-        if len(names) > 1:
+        # Magnitudes of the genotype vectors
+        self.dots = np.sum(self.geno*self.geno, axis = 0)[:,None]
+
+        if names is not None:
             self.names = names
         else:
+            # Placeholder names if env names are not given
             self.names = np.arange(self.num_env).astype('str')
-                                    # If environment names are not given, give them a placeholder name
 
-        for i in range(self.num_env):
-            self.N.append(len(geno[i][:,0]))             # Store the number of individuals per environment
+    def run(self, num_qtl = 20, b_plots = False, path = None):
+        """
+        Perform the forward-search algorithm
 
-            if np.min(geno[i]) < 0:
-                geno[i] = np.hstack( [geno[i], np.ones([self.N[i],1])] )
-                                                         # Allow for a constant offset -> Y = g * S + B
-            else:
-                geno[i] = geno[i] * 2 - 1        # Make the genotypes between -1 and 1 if they're given from 0 to 1
-                geno[i] = np.hstack( [geno[i], np.ones([self.N[i],1])] )
+        Parameters:
+            num_qtl [int]: Number of QTLs to find, defaults to 20
+            b_plts [bool]: Whether to plot and save each step
+            path [str]: Path to save plots to, only used if b_plots = True
 
-            if len(pheno[i].shape) < 2:
-                pheno[i] = pheno[i][:,None]
-
-            self.dots.append(np.sum(geno[i]*geno[i], axis = 0)[:,None]) # Calculate the dot products
-            self.S[0].append(linalg.norm(pheno[i]))      # The initial MSE without any QTLs added
-
-        self.S[0] = np.array(self.S[0])
-        self.S_tot[0] = sum(self.S[0]**2)**0.5
-        self.geno = geno
-        self.pheno = pheno
-        self.L = len(geno[0][0,:])
-
+        """
+        self.b_plots = b_plots
+        self.path = path
         self.num_qtl = num_qtl
-        self.pos = [ np.zeros([i+1, self.num_env]).astype('int') for i in range(self.num_qtl) ]
+        # Stores the MSE in every environment at every step
+        self.S = np.zeros((self.num_qtl + 1, self.num_env))
+        # Stores the total MSE across environments at every step
+        self.S_tot = np.zeros((self.num_qtl + 1, 1))
 
-        self.G = [np.zeros([1,1]) for i in range(self.num_env)]
-        self.T = [np.zeros([1,1]) for i in range(self.num_env)]
+        self.S[0,:] = np.nansum(self.pheno**2, axis = 1)**0.5
+        self.S_tot[0] = sum(self.S[0]**2)**0.5
+
+        self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
+        self.s_vals = np.zeros((self.num_qtl + 1, self.num_env))
+
+        self.G = np.zeros((1, 1, 1))
+        self.T = np.zeros((self.num_env, 1, 1))
         
+        self.step = 0
         self.add_first()
         while self.step < self.num_qtl:
-            self.qtl_step()
+            self.add_qtl()
 
     def add_first(self):
         #### Define variables for next iteration ####
-        pos = -1
-        self.s_vals = [np.zeros([1,self.num_env])]
         self.S_tot[self.step + 1] = self.S_tot[0]
         self.S[self.step + 1] = self.S[0]
-        self.pos[0][0,:] = pos
+        self.pos[0] = self.L
 
-        for i in range(self.num_env):
-            self.T[i][0,0] = np.sum(self.geno[i][:,pos]*self.pheno[i].T)
-            self.G[i][0,0] = np.sum(self.geno[i][:,pos]*self.geno[i][:,pos])
+        self.T[:,0,0] = np.nansum(self.geno[:,self.pos[0]]*self.pheno.T)
+        self.G[0,0,0] = np.sum(self.geno[:,self.pos[0]]*self.geno[:,self.pos[0]])
         self.step += 1
 
     def qtl_step(self):
+        # why does this function exist?
         self.add_qtl()
 
     def add_qtl(self):
@@ -242,14 +252,11 @@ def qr_step(geno,X0,S0,T0,G0,pos0,b0):
     G[:,range(m-1),-1] = np.matmul(geno[:,:].T,geno[:,pos0])
     T[:,range(m-1),0] = T0[:,0]
     T[:,-1,:] = np.matmul(geno[:,:].T,b0)
-    # print(G[0,:,:])
 
     R,d = qr.make_rd(G,T)
-    # print(R[0])
 
     R_inv = linalg.inv(R)
     X = np.matmul(R_inv,d)
-    # print(X[0])
 
     meas = np.matmul(geno[:,pos0],X[:,0:-1,0].T) + geno[:,:]*X[:,-1,0]
     S = linalg.norm(b0 - meas,axis=0)
@@ -269,7 +276,6 @@ def qr_step(geno,X0,S0,T0,G0,pos0,b0):
 
     pos[0:-1] = pos0
     pos[-1] = p
-    # print(pos)
     return X,S,T,G,pos
 
 ################################################################################
