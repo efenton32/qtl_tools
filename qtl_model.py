@@ -46,7 +46,6 @@ class QTL_model:
             num_qtl [int]: Number of QTLs to find, defaults to 20
             b_plts [bool]: Whether to plot and save each step
             path [str]: Path to save plots to, only used if b_plots = True
-
         """
         self.b_plots = b_plots
         self.path = path
@@ -56,7 +55,7 @@ class QTL_model:
         # Stores the total MSE across environments at every step
         self.S_tot = np.zeros((self.num_qtl + 1, 1))
 
-        self.S[0,:,None] = np.sum(self.pheno**2, axis = 1)**0.5
+        self.S[0,:,None] = np.sum( (self.pheno - np.mean(self.pheno, axis=1, keepdims=True))**2, axis = 1)**0.5
         self.S_tot[0] = sum(self.S[0]**2)**0.5
         self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
         self.s_vals = np.zeros((self.num_qtl + 1, self.num_env))
@@ -87,9 +86,6 @@ class QTL_model:
 
     def add_qtl(self):
         m = self.step + 1
-        print(self.step)
-        print(m)
-        print(self.S_tot)
         t = time.time()
         G = np.zeros((self.L, m, m))
         G[:,0:-1,0:-1] = self.G[:,:,:]
@@ -128,6 +124,7 @@ class QTL_model:
                 plt.plot(self.S[self.step-1][i] - S[i], label="Benefit " + self.names[i])
             plt.legend()
             # plt.ylim(0, )
+            plt.xlable("SNP index")
             plt.ylabel("Cost function benefit")
             plt.tight_layout()
             plt.savefig(self.path + str(m-1) + ".pdf")
@@ -143,8 +140,6 @@ class QTL_model:
         self.pos[m-1] = p
         s_vals = np.array(s_vals)
         self.s_vals[:m] = s_vals[:,p,:,0].T
-        print(self.s_vals)
-        print(self.pos)
         self.S_tot[self.step] = S_tot[p]
         self.S[self.step] = S[:,p]
         self.step += 1
