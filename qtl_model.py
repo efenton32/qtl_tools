@@ -18,9 +18,9 @@ class QTL_model:
         """
         if geno.shape[0] != pheno.shape[1]:
             raise ValueError("First dim of genotypes and 2nd dim of phenotypes must match")
-        self.pheno = pheno
+        self.pheno = pheno[:,:,None]
         self.N = geno.shape[0]
-        self.L = geno.shape[1]
+        self.L = geno.shape[1] + 1
         self.num_env = self.pheno.shape[0]
         
         if np.min(geno) > 0:
@@ -56,9 +56,8 @@ class QTL_model:
         # Stores the total MSE across environments at every step
         self.S_tot = np.zeros((self.num_qtl + 1, 1))
 
-        self.S[0,:] = np.nansum(self.pheno**2, axis = 1)**0.5
+        self.S[0,:,None] = np.sum(self.pheno**2, axis = 1)**0.5
         self.S_tot[0] = sum(self.S[0]**2)**0.5
-
         self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
         self.s_vals = np.zeros((self.num_qtl + 1, self.num_env))
 
@@ -67,48 +66,56 @@ class QTL_model:
         
         self.step = 0
         self.add_first()
-        while self.step < self.num_qtl:
-            self.add_qtl()
+        while self.step < self.num_qtl + 1:
+            self.qtl_step()
 
     def add_first(self):
-        #### Define variables for next iteration ####
-        self.S_tot[self.step + 1] = self.S_tot[0]
-        self.S[self.step + 1] = self.S[0]
-        self.pos[0] = self.L
+        """
+        Adds the first 'QTL' to the model. Note that this is not a true QTL, but represents the offset,
+        eg. centers the phenotype data to have 0 mean.
+        """
+        self.S_tot[self.step] = self.S_tot[0]
+        self.S[self.step] = self.S[0]
+        self.pos[0] = self.L - 1
 
-        self.T[:,0,0] = np.nansum(self.geno[:,self.pos[0]]*self.pheno.T)
+        self.T[:,0,0] = np.sum(self.geno[:,self.pos[0]]*self.pheno[:,:,0].T, axis = 0)
         self.G[0,0,0] = np.sum(self.geno[:,self.pos[0]]*self.geno[:,self.pos[0]])
         self.step += 1
 
     def qtl_step(self):
-        # why does this function exist?
         self.add_qtl()
 
     def add_qtl(self):
         m = self.step + 1
-        G = [[] for i in range(self.num_env)]
-        T = [[] for i in range(self.num_env)]
-        S = [[] for i in range(self.num_env)]
-        s_vals = [[] for i in range(self.num_env)]
+        print(self.step)
+        print(m)
+        print(self.S_tot)
+        t = time.time()
+        G = np.zeros((self.L, m, m))
+        G[:,0:-1,0:-1] = self.G[:,:,:]
+        G[:,-1,-1] = self.dots[:,0]
+        G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
 
-        self.pos[self.step][0:-1,:] = self.pos[self.step - 1][:,:]
+        T = np.zeros((self.num_env, self.L, m, 1))
+        S = np.zeros((self.num_env, self.L))
+        s_vals = np.zeros((self.num_env, self.L, m, 1))
 
         for i in range(self.num_env):
-            G[i] = np.zeros([self.L, m, m])
-            T[i] = np.zeros([self.L, m, 1])
+            t = time.time()
+            T[i,:,0:-1,0] = self.T[i,:,0]
+            T[i,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno[i])
 
-            G[i][:,0:-1,0:-1] = self.G[i][:,:]
-            G[i][:,-1,-1] = self.dots[i][:,0]
-            G[i][:,0:-1,-1] = np.matmul(self.geno[i][:,:].T, self.geno[i][:,self.pos[self.step-1][:,i]])
-            T[i][:,0:-1,0] = self.T[i][:,0]
-            T[i][:,-1,:] = np.matmul(self.geno[i][:,:].T,self.pheno[i])
-
-            R,d = qr.make_rd(G[i],T[i])
+            t = time.time()
+            R,d = qr.make_rd(G,T[i])
             R_inv = linalg.inv(R)
             s_vals[i] = np.matmul(R_inv,d)
-            calc = np.matmul( self.geno[i][:,self.pos[self.step-1][:,i]], s_vals[i][:,0:-1,0].T ) \
-                              + self.geno[i][:,:] * s_vals[i][:,-1,0]
+            del R, R_inv, d
+
+            t = time.time()
+            calc = np.matmul( self.geno[:,self.pos[:m-1,0]], s_vals[i,:,:-1,0].T ) \
+                              + self.geno[:,:] * s_vals[None,i,:,-1,0]
             S[i] = linalg.norm(self.pheno[i] - calc, axis = 0)
+            del calc
 
         S = np.array(S)
         S_tot = np.sum(S**2, axis = 0)**0.5
@@ -116,25 +123,28 @@ class QTL_model:
         #### Plot ####
         if self.b_plots:
             plt.figure()
-            plt.plot(self.S_tot[self.step + 1] - S_tot, label='Total benefit', color='black')
+            plt.plot(self.S_tot[self.step-1] - S_tot, label="Total benefit", color="black")
             for i in range(self.num_env):
-                plt.plot(self.S[self.step + 1][i] - S[i], label='Benefit ' + self.names[i])
+                plt.plot(self.S[self.step-1][i] - S[i], label="Benefit " + self.names[i])
             plt.legend()
-            plt.ylim(0, self.y_lim)
-            plt.ylabel('Cost func benefit')
-            plt.savefig(self.path + str(m) + '.png')
+            # plt.ylim(0, )
+            plt.ylabel("Cost function benefit")
+            plt.tight_layout()
+            plt.savefig(self.path + str(m-1) + ".pdf")
 
         #### Update variables for next iteration ####
-        S_tot[self.pos[self.step-1]] = np.inf
+        S_tot[self.pos[:m-1]] = np.inf
         p = np.argmin(S_tot)
 
-        for i in range(self.num_env):
-            self.T[i] = T[i][p]
-            self.G[i] = G[i][p]
+        self.T = T[:,p]
+        self.G = G[None,p,:,:]
+        del G, T
 
-        self.pos[self.step][-1,:] = p
+        self.pos[m-1] = p
         s_vals = np.array(s_vals)
-        self.s_vals.append(s_vals[:,p].squeeze(axis=-1).T)
+        self.s_vals[:m] = s_vals[:,p,:,0].T
+        print(self.s_vals)
+        print(self.pos)
         self.S_tot[self.step] = S_tot[p]
         self.S[self.step] = S[:,p]
         self.step += 1
