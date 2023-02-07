@@ -2,7 +2,7 @@ import numpy as np
 import time
 import numpy.linalg as linalg
 import qr_tools as qr
-
+import pandas as pd
 import matplotlib.pyplot as plt
 
 class QTL_model:
@@ -36,7 +36,7 @@ class QTL_model:
             self.names = names
         else:
             # Placeholder names if env names are not given
-            self.names = np.arange(self.num_env).astype('str')
+            self.names = np.arange(self.num_env).astype("str")
 
     def run(self, num_qtl = 20, b_plots = False, path = None):
         """
@@ -124,7 +124,7 @@ class QTL_model:
                 plt.plot(self.S[self.step-1][i] - S[i], label="Benefit " + self.names[i])
             plt.legend()
             # plt.ylim(0, )
-            plt.xlable("SNP index")
+            plt.xlabel("SNP index")
             plt.ylabel("Cost function benefit")
             plt.tight_layout()
             plt.savefig(self.path + str(m-1) + ".pdf")
@@ -202,6 +202,13 @@ class QTL_model:
                 calc = np.matmul( v_geno[env][:, self.pos[model][:,env]], self.s_vals[model][:,env] )
                 self.pred_err[env, model] = np.linalg.norm( v_pheno[env] - calc )
 
+    def dump_qtls(self, outfile):
+        columns = [" " for i in range(len(self.names)+1)]
+        columns[1:] = self.names
+        columns[0] = "pos"
+        df = pd.DataFrame(self.s_vals, index=self.pos[:,0], columns=self.names)
+        df.to_csv(outfile, sep="\t")
+
 
 ################################################################################
 
@@ -210,17 +217,6 @@ class QTL_model:
 
 ################################################################################
 
-def add_first(geno,pheno,num_ind):
-    num_env = pheno.shape[0]
-
-    s_vals = np.dot(geno.T,pheno)/num_ind
-    err = linalg.norm(pheno - s_vals.T*geno,axis = 0)
-    pos = np.array(np.argmin(err))
-    s_vals = np.array(s_vals[pos])
-    err = linalg.norm(pheno[:,0] - geno[:,pos]*s_vals)
-    return s_vals,err,pos
-
-################################################################################
 
 def refit(geno,X,G,pos,b,b_explained):
     N = len(geno[:,0])
