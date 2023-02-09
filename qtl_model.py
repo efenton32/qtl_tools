@@ -4,6 +4,7 @@ import numpy.linalg as linalg
 import qr_tools as qr
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
 
 class QTL_model:
 
@@ -16,9 +17,10 @@ class QTL_model:
             geno [numpy array]: Array of genotype data. Shape (# lineages, # SNPs)
             names [list of str]: Environment names, optional
         """
+        t = time.time()
         if geno.shape[0] != pheno.shape[1]:
             raise ValueError("First dim of genotypes and 2nd dim of phenotypes must match")
-        self.pheno = pheno[:,:,None].astype("float32")
+        self.pheno = pheno[:,:,None]
         self.N = geno.shape[0]
         self.L = geno.shape[1] + 1
         self.num_env = self.pheno.shape[0]
@@ -26,48 +28,60 @@ class QTL_model:
         if np.min(geno) > 0:
             # Make genotypes between -1 and 1 if they're given 0~1
             geno = geno * 2 - 1
-        self.geno = np.hstack( [geno, np.ones((self.N, 1))] ).astype("float32")
+        self.geno = np.hstack( [geno, np.ones((self.N, 1))] )
         del geno
 
         # Magnitudes of the genotype vectors
         self.dots = np.sum(self.geno*self.geno, axis = 0)[:,None]
-        print(type(self.dots))
 
         if names is not None:
             self.names = names
         else:
             # Placeholder names if env names are not given
             self.names = np.arange(self.num_env).astype("str")
+        print("Initialize: {}".format(round(time.time() - t)))
 
-    def run(self, num_qtl = 20, b_plots = False, path = None):
+    def run(self, num_qtl = 20, b_plots = False, path = None, b_save_itm = False, outfile = None):
         """
         Perform the forward-search algorithm
 
         Parameters:
             num_qtl [int]: Number of QTLs to find, defaults to 20
-            b_plts [bool]: Whether to plot and save each step
+            b_plots [bool]: Whether to plot and save each step
             path [str]: Path to save plots to, only used if b_plots = True
         """
+        if b_plots:
+            try:
+                os.mkdir(path)
+            except:
+                pass
+        t = time.time()
+        self.S0 = np.sum(self.pheno**2, axis=1)**0.5
         self.b_plots = b_plots
         self.path = path
+        self.b_save_itm = b_save_itm
+        self.outfile = outfile
         self.num_qtl = num_qtl
         # Stores the MSE in every environment at every step
         self.S = np.zeros((self.num_qtl + 1, self.num_env))
         # Stores the total MSE across environments at every step
         self.S_tot = np.zeros((self.num_qtl + 1, 1))
 
-        self.S[0,:,None] = np.sum( (self.pheno - np.mean(self.pheno, axis=1, keepdims=True))**2, axis = 1)**0.5
-        self.S_tot[0] = sum(self.S[0]**2)**0.5
+        self.S[0,:,None] = np.sum( (self.pheno - np.mean(self.pheno, axis=1, keepdims=True))**2, axis = 1)
+        self.S_tot[0] = np.sum(self.S[0], axis=0)
         self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
-        self.s_vals = np.zeros((self.num_qtl + 1, self.num_env))
 
         self.G = np.zeros((1, 1, 1))
         self.T = np.zeros((self.num_env, 1, 1))
         
         self.step = 0
         self.add_first()
+        print("Add first: {}".format(round(time.time() - t)))
         while self.step < self.num_qtl + 1:
+            t = time.time()
             self.qtl_step()
+            print("Step {}: {}".format(self.step-1, round(time.time() - t)))
+        self.generate_s_vals()
 
     def add_first(self):
         """
@@ -84,61 +98,40 @@ class QTL_model:
 
     def qtl_step(self):
         self.add_qtl()
+        if self.b_save_itm and self.step % 10 == 0:
+            self.generate_s_vals()
+            self.dump_qtls(self.outfile)
+
+    def dump_qtls(self, outfile):
+        columns = [" " for i in range(len(self.names)+1)]
+        columns[1:] = self.names
+        columns[0] = "pos"
+        df = pd.DataFrame(self.s_vals, index=self.pos[:self.step,0], columns=self.names)
+        df.to_csv(outfile, sep="\t")
 
     def add_qtl(self):
         m = self.step + 1
-        t = time.time()
         t = time.time()
         G = np.zeros((self.L, m, m))
         G[:,0:-1,0:-1] = self.G[:,:,:]
         G[:,-1,-1] = self.dots[:,0]
         G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
-        print("Make G: {}".format(round(time.time()-t)))
 
         T = np.zeros((self.num_env, self.L, m, 1))
-        S = np.zeros((self.num_env, self.L)).astype("float32")
-        s_vals = np.zeros((self.num_env, self.L, m, 1)).astype("float32")
+        S = np.zeros((self.num_env, self.L))
+        # s_vals = np.zeros((self.num_env, self.L, m, 1))
 
         for i in range(self.num_env):
-            t = time.time()
             T[i,:,0:-1,0] = self.T[i,:,0]
             T[i,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno[i])
-            print("Make T: {}".format(round(time.time()-t)))
 
-            t = time.time()
             R,d = qr.make_rd(G,T[i])
-            print(d.shape)
-            print(d[0])
-            print(d[1])
-            print(d[7117])
-            print(d[28215])
             R_inv = linalg.inv(R)
-            print("Make R, D, R_inv: {}".format(round(time.time()-t)))
-            t = time.time()
-            s_vals[i] = np.matmul(R_inv,d)
-            print("Make s_vals: {}".format(round(time.time()-t)))
 
-            # print(np.matmul( self.geno[:,self.pos[:m-1,0]], s_vals[i,:,:-1,0].T ).shape)
-            t = time.time()
-            calc = np.matmul( self.geno[:,self.pos[:m-1,0]], s_vals[i,:,:-1,0].T ) \
-                              + self.geno[:,:] * s_vals[None,i,:,-1,0]
-            print("Make calc: {}".format(round(time.time()-t)))
-            t = time.time()
-            S[i] = linalg.norm(self.pheno[i] - calc, axis = 0)
-            print(S[i][0])
-            print(S[i][1])
-            print(S[i][7117])
-            print(S[i][28215])
-            print("Make S: {}".format(round(time.time()-t)))
-            plt.figure()
-            plt.plot(d[:,-1,0]**2, S[i], ".")
-            plt.xlim((0,600))
-            plt.ylim((40,60))
-            plt.savefig(self.path + "{}.png".format(self.step))
-            plt.close()
+            S[i] = self.S0[i]**2 - np.sum(d**2, axis=1)[:,0]
 
         S = np.array(S)
-        S_tot = np.sum(S**2, axis = 0)**0.5
+        S_tot = np.sum(S, axis = 0)
 
         #### Plot ####
         if self.b_plots:
@@ -162,11 +155,18 @@ class QTL_model:
         del G, T
 
         self.pos[m-1] = p
-        s_vals = np.array(s_vals)
-        self.s_vals[:m] = s_vals[:,p,:,0].T
+        # s_vals = np.array(s_vals)
+        # self.s_vals[:m] = s_vals[:,p,:,0].T
         self.S_tot[self.step] = S_tot[p]
         self.S[self.step] = S[:,p]
         self.step += 1
+
+    def generate_s_vals(self):
+        self.s_vals = np.zeros((self.step, self.num_env))
+        for i in range(self.num_env):
+            R, d = qr.make_rd(self.G, self.T[i,None,:,:])
+            R_inv = linalg.inv(R)
+            self.s_vals[:,i] = np.matmul(R_inv,d)[0,:,0]
 
     def back_eliminate(self):
         self.elim_step = self.step - 1
@@ -225,13 +225,6 @@ class QTL_model:
                 self.calc[env].append(np.matmul( v_geno[env][:, self.pos[model][:,env]], self.s_vals[model][:,env] ))
                 calc = np.matmul( v_geno[env][:, self.pos[model][:,env]], self.s_vals[model][:,env] )
                 self.pred_err[env, model] = np.linalg.norm( v_pheno[env] - calc )
-
-    def dump_qtls(self, outfile):
-        columns = [" " for i in range(len(self.names)+1)]
-        columns[1:] = self.names
-        columns[0] = "pos"
-        df = pd.DataFrame(self.s_vals, index=self.pos[:,0], columns=self.names)
-        df.to_csv(outfile, sep="\t")
 
 
 ################################################################################
