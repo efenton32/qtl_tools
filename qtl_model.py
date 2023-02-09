@@ -18,7 +18,7 @@ class QTL_model:
         """
         if geno.shape[0] != pheno.shape[1]:
             raise ValueError("First dim of genotypes and 2nd dim of phenotypes must match")
-        self.pheno = pheno[:,:,None]
+        self.pheno = pheno[:,:,None].astype("float32")
         self.N = geno.shape[0]
         self.L = geno.shape[1] + 1
         self.num_env = self.pheno.shape[0]
@@ -26,11 +26,12 @@ class QTL_model:
         if np.min(geno) > 0:
             # Make genotypes between -1 and 1 if they're given 0~1
             geno = geno * 2 - 1
-        self.geno = np.hstack( [geno, np.ones((self.N, 1))] )
+        self.geno = np.hstack( [geno, np.ones((self.N, 1))] ).astype("float32")
         del geno
 
         # Magnitudes of the genotype vectors
         self.dots = np.sum(self.geno*self.geno, axis = 0)[:,None]
+        print(type(self.dots))
 
         if names is not None:
             self.names = names
@@ -87,31 +88,54 @@ class QTL_model:
     def add_qtl(self):
         m = self.step + 1
         t = time.time()
+        t = time.time()
         G = np.zeros((self.L, m, m))
         G[:,0:-1,0:-1] = self.G[:,:,:]
         G[:,-1,-1] = self.dots[:,0]
         G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
+        print("Make G: {}".format(round(time.time()-t)))
 
         T = np.zeros((self.num_env, self.L, m, 1))
-        S = np.zeros((self.num_env, self.L))
-        s_vals = np.zeros((self.num_env, self.L, m, 1))
+        S = np.zeros((self.num_env, self.L)).astype("float32")
+        s_vals = np.zeros((self.num_env, self.L, m, 1)).astype("float32")
 
         for i in range(self.num_env):
             t = time.time()
             T[i,:,0:-1,0] = self.T[i,:,0]
             T[i,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno[i])
+            print("Make T: {}".format(round(time.time()-t)))
 
             t = time.time()
             R,d = qr.make_rd(G,T[i])
+            print(d.shape)
+            print(d[0])
+            print(d[1])
+            print(d[7117])
+            print(d[28215])
             R_inv = linalg.inv(R)
+            print("Make R, D, R_inv: {}".format(round(time.time()-t)))
+            t = time.time()
             s_vals[i] = np.matmul(R_inv,d)
-            del R, R_inv, d
+            print("Make s_vals: {}".format(round(time.time()-t)))
 
+            # print(np.matmul( self.geno[:,self.pos[:m-1,0]], s_vals[i,:,:-1,0].T ).shape)
             t = time.time()
             calc = np.matmul( self.geno[:,self.pos[:m-1,0]], s_vals[i,:,:-1,0].T ) \
                               + self.geno[:,:] * s_vals[None,i,:,-1,0]
+            print("Make calc: {}".format(round(time.time()-t)))
+            t = time.time()
             S[i] = linalg.norm(self.pheno[i] - calc, axis = 0)
-            del calc
+            print(S[i][0])
+            print(S[i][1])
+            print(S[i][7117])
+            print(S[i][28215])
+            print("Make S: {}".format(round(time.time()-t)))
+            plt.figure()
+            plt.plot(d[:,-1,0]**2, S[i], ".")
+            plt.xlim((0,600))
+            plt.ylim((40,60))
+            plt.savefig(self.path + "{}.png".format(self.step))
+            plt.close()
 
         S = np.array(S)
         S_tot = np.sum(S**2, axis = 0)**0.5
