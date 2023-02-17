@@ -118,29 +118,31 @@ class QTL_model:
         G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
 
         T = np.zeros((self.num_env, self.L, m, 1))
-        S = np.zeros((self.num_env, self.L))
+        # S = np.zeros((self.num_env, self.L))
         # s_vals = np.zeros((self.num_env, self.L, m, 1))
+        T[:,:,0:-1,0] = self.T[:,:,:].transpose((0,2,1))
+        T[:,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno)
+        if self.step == 1:
+            R,d = qr.make_rd(G,T)
+        else:
+            # R,d = qr.make_rd(G,T)
+            R,d = qr.make_rd(G,T,self.R,self.d)
+        R_inv = linalg.inv(R)
 
-        for i in range(self.num_env):
-            T[i,:,0:-1,0] = self.T[i,:,0]
-            T[i,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno[i])
-
-            R,d = qr.make_rd(G,T[i])
-            R_inv = linalg.inv(R)
-
-            S[i] = self.S0[i]**2 - np.sum(d**2, axis=1)[:,0]
+        S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
 
         S = np.array(S)
         S_tot = np.sum(S, axis = 0)
 
         #### Plot ####
         if self.b_plots:
+            print("plotting")
             plt.figure()
             plt.plot(self.S_tot[self.step-1] - S_tot, label="Total benefit", color="black")
             for i in range(self.num_env):
                 plt.plot(self.S[self.step-1][i] - S[i], label="Benefit " + self.names[i])
             plt.legend()
-            # plt.ylim(0, )
+            # plt.ylim(0, 320)
             plt.xlabel("SNP index")
             plt.ylabel("Cost function benefit")
             plt.tight_layout()
@@ -152,7 +154,9 @@ class QTL_model:
 
         self.T = T[:,p]
         self.G = G[None,p,:,:]
-        del G, T
+        self.d = d[:,p]
+        self.R = R[None,p,:,:]
+        del G, T, R, d
 
         self.pos[m-1] = p
         # s_vals = np.array(s_vals)
@@ -163,10 +167,10 @@ class QTL_model:
 
     def generate_s_vals(self):
         self.s_vals = np.zeros((self.step, self.num_env))
-        for i in range(self.num_env):
-            R, d = qr.make_rd(self.G, self.T[i,None,:,:])
-            R_inv = linalg.inv(R)
-            self.s_vals[:,i] = np.matmul(R_inv,d)[0,:,0]
+        R_inv = linalg.inv(self.R)
+        # for i in range(self.num_env):
+        #     self.s_vals[:,i] = np.matmul(R_inv, self.d[i])[0,:,0]
+        self.s_vals[:,:] = np.matmul(R_inv,self.d).transpose((1,0,2))[:,:,0]
 
     def back_eliminate(self):
         self.elim_step = self.step - 1
