@@ -136,7 +136,6 @@ class QTL_model:
 
         #### Plot ####
         if self.b_plots:
-            print("plotting")
             plt.figure()
             plt.plot(self.S_tot[self.step-1] - S_tot, label="Total benefit", color="black")
             for i in range(self.num_env):
@@ -147,6 +146,7 @@ class QTL_model:
             plt.ylabel("Cost function benefit")
             plt.tight_layout()
             plt.savefig(self.path + str(m-1) + ".pdf")
+            plt.close()
 
         #### Update variables for next iteration ####
         S_tot[self.pos[:m-1]] = np.inf
