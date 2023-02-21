@@ -118,19 +118,14 @@ class QTL_model:
         G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
 
         T = np.zeros((self.num_env, self.L, m, 1))
-        # S = np.zeros((self.num_env, self.L))
-        # s_vals = np.zeros((self.num_env, self.L, m, 1))
         T[:,:,0:-1,0] = self.T[:,:,:].transpose((0,2,1))
         T[:,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno)
         if self.step == 1:
             R,d = qr.make_rd(G,T)
         else:
-            # R,d = qr.make_rd(G,T)
             R,d = qr.make_rd(G,T,self.R,self.d)
-        R_inv = linalg.inv(R)
 
         S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
-
         S = np.array(S)
         S_tot = np.sum(S, axis = 0)
 
@@ -159,8 +154,6 @@ class QTL_model:
         del G, T, R, d
 
         self.pos[m-1] = p
-        # s_vals = np.array(s_vals)
-        # self.s_vals[:m] = s_vals[:,p,:,0].T
         self.S_tot[self.step] = S_tot[p]
         self.S[self.step] = S[:,p]
         self.step += 1
@@ -168,8 +161,6 @@ class QTL_model:
     def generate_s_vals(self):
         self.s_vals = np.zeros((self.step, self.num_env))
         R_inv = linalg.inv(self.R)
-        # for i in range(self.num_env):
-        #     self.s_vals[:,i] = np.matmul(R_inv, self.d[i])[0,:,0]
         self.s_vals[:,:] = np.matmul(R_inv,self.d).transpose((1,0,2))[:,:,0]
 
     def back_eliminate(self):
