@@ -25,13 +25,15 @@ class QTL_model:
         self.L = geno.shape[1] + 1
         self.num_env = self.pheno.shape[0]
         
+        # Make genotypes between -1 and 1 if they're given 0~1
         if np.min(geno) > 0:
-            # Make genotypes between -1 and 1 if they're given 0~1
             geno = geno * 2 - 1
+        # Add a locus of all 1's for all segregants at the end of the genotype matrix
+        # This effectively acts as the "offset" locus
         self.geno = np.hstack( [geno, np.ones((self.N, 1))] )
         del geno
 
-        # Magnitudes of the genotype vectors
+        # Stores the magnitudes of the genotype vectors
         self.dots = np.sum(self.geno*self.geno, axis = 0)[:,None]
 
         if names is not None:
@@ -47,41 +49,58 @@ class QTL_model:
 
         Parameters:
             num_qtl [int]: Number of QTLs to find, defaults to 20
-            b_plots [bool]: Whether to plot and save each step
+            b_plots [bool]: Boolean to indicate whether to plot and save each step
             path [str]: Path to save plots to, only used if b_plots = True
+            b_save_itm [bool]: Boolean to save intermediate steps. If True, saves results every 10 steps.
+            outfile [str]: File to save intermdiate steps to. Unused if b_save_itm = False.
         """
+        # Make the directory for saving plots if it doesn't already exist
         if b_plots:
             try:
                 os.mkdir(path)
-            except:
+            except FileExistsError:
                 pass
         t = time.time()
+        # S0 represents the loss function, or the squared residuals. With a blank model, the residuals
+        # are just the phenotypes squared
         self.S0 = np.sum(self.pheno**2, axis=1)**0.5
         self.b_plots = b_plots
         self.path = path
         self.b_save_itm = b_save_itm
         self.outfile = outfile
         self.num_qtl = num_qtl
-        # Stores the MSE in every environment at every step
+        # Stores the summed squared residuals in every environment at every step
         self.S = np.zeros((self.num_qtl + 1, self.num_env))
-        # Stores the total MSE across environments at every step
+        # Stores the summed squared residuals, summed across environments at every step. This is the
+        # loss we are trying to minimize
         self.S_tot = np.zeros((self.num_qtl + 1, 1))
 
+        # The summed squared residuals are just the phenotypes squared for an empty model
         self.S[0,:,None] = np.sum( (self.pheno - np.mean(self.pheno, axis=1, keepdims=True))**2, axis = 1)
         self.S_tot[0] = np.sum(self.S[0], axis=0)
         self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
 
+        # G and T hold all the information required for these decompositions, but what they actually
+        # represent is too complicated to explain here
         self.G = np.zeros((1, 1, 1))
         self.T = np.zeros((self.num_env, 1, 1))
         
+        # Tracks the step of forward search we're currently on. Fitting the offset is considered step 0
         self.step = 0
+        # add_first() adds the first "QTL". In reality, this is ALWAYS at the last locus, representing the
+        # offset.
         self.add_first()
         print("Add first: {}".format(round(time.time() - t)))
+        # Add qtls to the modeul until we've added the specified number.
         while self.step < self.num_qtl + 1:
             t = time.time()
+            # qtl_step adds a QTL to the model
             self.qtl_step()
             print("Step {}: {}".format(self.step-1, round(time.time() - t)))
+        # generate_s_vals() calculates the fitness effect of every QTL in the model
         self.generate_s_vals()
+        # calculate_CIs() calculates 95% confidence intervals for the positions of all QTLs
+        self.calculate_CIs()
 
     def add_first(self):
         """
@@ -203,7 +222,6 @@ class QTL_model:
 
         self.elim_step -= 1
         self.step += 1
-
 
     def validate(self, v_pheno, v_geno):
         num_envs = len(v_pheno)
