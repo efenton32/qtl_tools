@@ -132,8 +132,6 @@ class QTL_model:
     def refit_pos(self):
         for q in range(1, self.step + 1):
             print()
-            print()
-            print()
             print("q = {}".format(q))
             pos_sorted = np.sort(self.pos[1:self.step+1,0])
             chrom = np.searchsorted(self.chr_edges, self.pos[q], "right")[0] - 1
@@ -177,14 +175,13 @@ class QTL_model:
             self.pos[q,0] = p + bottom
             self.S_tot[self.step] = S_tot[p]
             self.S[self.step] = S[:,p]
-            print(self.pos[:,0])
 
 
     def dump_qtls(self, outfile):
         columns = [" " for i in range(len(self.names)+1)]
         columns[1:] = self.names
         columns[0] = "pos"
-        df = pd.DataFrame(self.s_vals, index=self.pos[:self.step,0], columns=self.names)
+        df = pd.DataFrame(self.s_vals, index=self.pos[:self.step+1,0], columns=self.names)
         df.to_csv(outfile, sep="\t")
 
     def add_qtl(self):
