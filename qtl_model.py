@@ -8,14 +8,18 @@ import os
 
 class QTL_model:
 
-    def __init__(self, pheno, geno, names = None):
+    def __init__(self, pheno, geno, names = None,
+                 chr_edges = [0, 995, 4730, 5288, 9323, 11182, 12470, 16401, 18039, 20117, 23091, 26330, 
+                              30640, 33585, 35384, 39673, 41594]
+    ):
         """
         Initializes a QTL model
 
         Parameters:
-            pheno [numpy array]: Array of phenotypic data. Shape (# envs, # lineages)
-            geno [numpy array]: Array of genotype data. Shape (# lineages, # SNPs)
+            pheno [numpy array]: Array of phenotypic data. Shape (# envs, # segregants)
+            geno [numpy array]: Array of genotype data. Shape (# segregants, # SNPs)
             names [list of str]: Environment names, optional
+            chr_edges [list of int]: SNP indices that define chromosome boundaries
         """
         t = time.time()
         if geno.shape[0] != pheno.shape[1]:
@@ -24,6 +28,7 @@ class QTL_model:
         self.N = geno.shape[0]
         self.L = geno.shape[1] + 1
         self.num_env = self.pheno.shape[0]
+        self.chr_edges = chr_edges
         
         # Make genotypes between -1 and 1 if they're given 0~1
         if np.min(geno) > 0:
@@ -43,7 +48,7 @@ class QTL_model:
             self.names = np.arange(self.num_env).astype("str")
         print("Initialize: {}".format(round(time.time() - t)))
 
-    def run(self, num_qtl = 20, b_plots = False, path = None, b_save_itm = False, outfile = None):
+    def run(self, num_qtl = 20, refit = None, b_plots = False, path = None, b_save_itm = False, outfile = None):
         """
         Perform the forward-search algorithm
 
@@ -69,6 +74,7 @@ class QTL_model:
         self.b_save_itm = b_save_itm
         self.outfile = outfile
         self.num_qtl = num_qtl
+        self.refit = refit
         # Stores the summed squared residuals in every environment at every step
         self.S = np.zeros((self.num_qtl + 1, self.num_env))
         # Stores the summed squared residuals, summed across environments at every step. This is the
@@ -80,32 +86,34 @@ class QTL_model:
         self.S_tot[0] = np.sum(self.S[0], axis=0)
         self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
 
-        # G and T hold all the information required for these decompositions, but what they actually
-        # represent is too complicated to explain here
+        # G holds the dot products of loci in the model with each other all potential new loci to add 
+        # to the model
         self.G = np.zeros((1, 1, 1))
+        # T holds the dot products of the phenotype vectors with loci in the model and all potential
+        # new loci to add to the model
         self.T = np.zeros((self.num_env, 1, 1))
         
         # Tracks the step of forward search we're currently on. Fitting the offset is considered step 0
         self.step = 0
-        # add_first() adds the first "QTL". In reality, this is ALWAYS at the last locus, representing the
-        # offset.
+        # add_first() adds the first "QTL". This is ALWAYS at the last locus and represents the offset.
         self.add_first()
         print("Add first: {}".format(round(time.time() - t)))
         # Add qtls to the modeul until we've added the specified number.
         while self.step < self.num_qtl + 1:
             t = time.time()
-            # qtl_step adds a QTL to the model
             self.qtl_step()
-            print("Step {}: {}".format(self.step-1, round(time.time() - t)))
-        # generate_s_vals() calculates the fitness effect of every QTL in the model
+            if self.refit is not None:
+                if self.step % self.refit == 0:
+                    self.refit_pos()
+            print("Step {}: {}".format(self.step, round(time.time() - t)))
+            self.step += 1
         self.generate_s_vals()
-        # calculate_CIs() calculates 95% confidence intervals for the positions of all QTLs
-        self.calculate_CIs()
+        # self.calculate_CIs()
 
     def add_first(self):
         """
         Adds the first 'QTL' to the model. Note that this is not a true QTL, but represents the offset,
-        eg. centers the phenotype data to have 0 mean.
+        eg. centers the phenotype data to have 0 mean. This is always at the last position in the genome.
         """
         self.S_tot[self.step] = self.S_tot[0]
         self.S[self.step] = self.S[0]
@@ -120,6 +128,57 @@ class QTL_model:
         if self.b_save_itm and self.step % 10 == 0:
             self.generate_s_vals()
             self.dump_qtls(self.outfile)
+
+    def refit_pos(self):
+        for q in range(1, self.step + 1):
+            print()
+            print()
+            print()
+            print("q = {}".format(q))
+            pos_sorted = np.sort(self.pos[1:self.step+1,0])
+            chrom = np.searchsorted(self.chr_edges, self.pos[q], "right")[0] - 1
+            edge_low = self.chr_edges[chrom]
+            edge_high = self.chr_edges[chrom+1] - 1
+            gap = np.where(pos_sorted == self.pos[q,0])[0]
+            if gap == 0:
+                bottom = edge_low
+                top = int(min(edge_high, pos_sorted[gap+1]-1))
+            elif gap+1 == len(pos_sorted):
+                bottom = int(max(edge_low, pos_sorted[gap-1]+1))
+                top = edge_high
+            else:
+                bottom = int(max(edge_low, pos_sorted[gap-1]+1))
+                top = int(min(edge_high, pos_sorted[gap+1]-1))
+            G = np.zeros([top-bottom+1, self.step+1, self.step+1])
+            T = np.zeros([self.num_env, top-bottom+1, self.step+1, 1])
+            G[:,:,:] = self.G
+            G[:,:q,q] = np.dot(self.geno[:,bottom:top+1].T, self.geno[:,self.pos[:q,0]])
+            G[:,q,q] = self.dots[bottom:top+1,0]
+            G[:,q,q+1:] = np.dot(self.geno[:,bottom:top+1].T, self.geno[:,self.pos[q+1:self.step+1,0]])
+            
+            T[:,:,:,:] = self.T[:,None,:,:]
+            T[:,:,q,:] = np.matmul(self.geno[:,bottom:top+1].T, self.pheno)
+            R,d = qr.make_rd(G, T, R0 = self.R[:,:q,:q], d0 = self.d[:,:q,:])
+            S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
+            S = np.array(S)
+            S_tot = np.sum(S, axis = 0)
+            # S_tot[self.pos[:q,0]] = np.inf
+            # S_tot[self.pos[q+1:,0]] = np.inf
+            p = np.argmin(S_tot)
+            if p + bottom != self.pos[q,0]:
+                print("QTL {} moved from {} to {}".format(q, self.pos[q,0], p + bottom))
+    
+            self.T = T[:,p]
+            self.G = G[None,p,:,:]
+            self.d = d[:,p]
+            self.R = R[None,p,:,:]
+            del G, T, R, d
+
+            self.pos[q,0] = p + bottom
+            self.S_tot[self.step] = S_tot[p]
+            self.S[self.step] = S[:,p]
+            print(self.pos[:,0])
+
 
     def dump_qtls(self, outfile):
         columns = [" " for i in range(len(self.names)+1)]
@@ -175,7 +234,6 @@ class QTL_model:
         self.pos[m-1] = p
         self.S_tot[self.step] = S_tot[p]
         self.S[self.step] = S[:,p]
-        self.step += 1
 
     def generate_s_vals(self):
         self.s_vals = np.zeros((self.step, self.num_env))

@@ -14,11 +14,19 @@ def make_rd(G,T,R0=None,d0=None):
             R,d = eliminate_row(R,d,p,p,x)
             R,d = finalize_row(R,d,p)
     else:
-        R = G
-        d = T
-        R[:,:-1,:-1] = R0[None,:,:]
-        d[:,:,:-1] = d0[:,None,:]
-        R,d = finalize_column(R,d)
+        R = G.copy()
+        d = T.copy()
+        n = len(R[0,0,:]) - len(R0[0,0,:])
+        k = len(R0[0,0,:])
+
+        # R[:,:-1,:-1] = R0[None,:,:]
+        # d[:,:,:-1] = d0[:,None,:]
+        # R,d = finalize_column(R,d)
+
+        R[:,:-n,:-n] = R0[None,:,:]
+        d[:,:,:-n] = d0[:,None,:]
+        for i in range(k+1,k+n+1):
+            R[:,:i,:i],d[:,:,:i] = finalize_column(R[:,:i,:i],d[:,:,:i])
     return R,d
 
 def eliminate_row(G,T,k,col,m):
