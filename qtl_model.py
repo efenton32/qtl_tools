@@ -233,7 +233,7 @@ class QTL_model:
         self.S[self.step] = S[:,p]
 
     def generate_s_vals(self):
-        self.s_vals = np.zeros((self.step, self.num_env))
+        self.s_vals = np.zeros((self.step+1, self.num_env))
         R_inv = linalg.inv(self.R)
         self.s_vals[:,:] = np.matmul(R_inv,self.d).transpose((1,0,2))[:,:,0]
 
@@ -259,7 +259,7 @@ class QTL_model:
 
             R,d = qr.make_rd(G, T)
             R_inv = linalg.inv(R)
-            s_vals = np.matmul(R_inv, d)
+            s_vals = np.matmul(R_inv, d+1)
             calc = []
             for i in range(self.elim_step):
                 calc.append( np.matmul(self.geno[env][:, self.pos[self.step - 1][0:i+1, env]], s_vals[i][0:i+1])
