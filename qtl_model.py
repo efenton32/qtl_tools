@@ -105,9 +105,12 @@ class QTL_model:
             if self.refit is not None:
                 if self.step % self.refit == 0:
                     self.refit_pos()
+            print()
             print("Step {}: {}".format(self.step, round(time.time() - t)))
             self.step += 1
+        self.step -= 1
         self.generate_s_vals()
+        self.step += 1
         # self.calculate_CIs()
 
     def add_first(self):
@@ -127,14 +130,15 @@ class QTL_model:
         self.add_qtl()
         if self.b_save_itm and self.step % 10 == 0:
             self.generate_s_vals()
+            save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step+1)
             self.dump_qtls(self.outfile)
 
     def refit_pos(self):
         for q in range(1, self.step + 1):
-            print()
-            print("q = {}".format(q))
             pos_sorted = np.sort(self.pos[1:self.step+1,0])
             chrom = np.searchsorted(self.chr_edges, self.pos[q], "right")[0] - 1
+            print("-------")
+            print(self.pos[q])
             edge_low = self.chr_edges[chrom]
             edge_high = self.chr_edges[chrom+1] - 1
             gap = np.where(pos_sorted == self.pos[q,0])[0]
@@ -156,13 +160,31 @@ class QTL_model:
             
             T[:,:,:,:] = self.T[:,None,:,:]
             T[:,:,q,:] = np.matmul(self.geno[:,bottom:top+1].T, self.pheno)
+            print(self.R[:,:q,:q].shape)
             R,d = qr.make_rd(G, T, R0 = self.R[:,:q,:q], d0 = self.d[:,:q,:])
+            # print(d.shape)
             S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
             S = np.array(S)
             S_tot = np.sum(S, axis = 0)
-            # S_tot[self.pos[:q,0]] = np.inf
-            # S_tot[self.pos[q+1:,0]] = np.inf
-            p = np.argmin(S_tot)
+            p = np.nanargmin(S_tot)
+
+            #### Plot ####
+            if self.b_plots:
+                plt.figure()
+                a = max(S_tot)
+                b = max(a - S_tot)
+                plt.plot(a - S_tot, label="Total benefit", color="black")
+                plt.plot([self.pos[q,0]-bottom, self.pos[q,0]-bottom], [0, b], "--", color="gray")
+                plt.plot([p, p], [0, b], "--", color="orchid")
+                for i in range(self.num_env):
+                    a = max(S[i])
+                    plt.plot(a-S[i], label="Benefit " + self.names[i])
+                plt.xlabel("SNP index")
+                plt.ylabel("Cost function benefit")
+                plt.tight_layout()
+                plt.savefig(self.path + str(self.step) + "q_{}.pdf".format(q))
+                plt.close()
+
             if p + bottom != self.pos[q,0]:
                 print("QTL {} moved from {} to {}".format(q, self.pos[q,0], p + bottom))
     
@@ -173,7 +195,11 @@ class QTL_model:
             del G, T, R, d
 
             self.pos[q,0] = p + bottom
+            print(p + bottom)
             self.S_tot[self.step] = S_tot[p]
+            print(self.S_tot[self.step])
+            # print(np.round(self.G[0]))
+            print(np.round(self.R[0]))
             self.S[self.step] = S[:,p]
 
 
@@ -210,7 +236,7 @@ class QTL_model:
             plt.plot(self.S_tot[self.step-1] - S_tot, label="Total benefit", color="black")
             for i in range(self.num_env):
                 plt.plot(self.S[self.step-1][i] - S[i], label="Benefit " + self.names[i])
-            plt.legend()
+            # plt.legend()
             # plt.ylim(0, 320)
             plt.xlabel("SNP index")
             plt.ylabel("Cost function benefit")
@@ -220,7 +246,7 @@ class QTL_model:
 
         #### Update variables for next iteration ####
         S_tot[self.pos[:m-1]] = np.inf
-        p = np.argmin(S_tot)
+        p = np.nanargmin(S_tot)
 
         self.T = T[:,p]
         self.G = G[None,p,:,:]
@@ -267,7 +293,7 @@ class QTL_model:
 
             calc = np.array(calc)
             S = linalg.norm(self.pheno[env] - calc, axis=1)
-            p = np.argmin(S)
+            p = np.nanargmin(S)
 
             self.G[env] = G[p]
             self.T[env] = T[p]
@@ -354,7 +380,7 @@ def qr_step(geno,X0,S0,T0,G0,pos0,b0):
     # plt.show()
 
 
-    p = np.argmin(S)
+    p = np.nanargmin(S)
     X = X[p]
     S = S[p]
     T = T[p]

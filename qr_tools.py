@@ -18,6 +18,8 @@ def make_rd(G,T,R0=None,d0=None):
         d = T.copy()
         n = len(R[0,0,:]) - len(R0[0,0,:])
         k = len(R0[0,0,:])
+        print("n = {}".format(n))
+        print("k = {}".format(k))
 
         # R[:,:-1,:-1] = R0[None,:,:]
         # d[:,:,:-1] = d0[:,None,:]
@@ -29,6 +31,16 @@ def make_rd(G,T,R0=None,d0=None):
             R[:,:i,:i],d[:,:,:i] = finalize_column(R[:,:i,:i],d[:,:,:i])
     return R,d
 
+def finalize_column(R,d):
+    print("max p = {}".format(len(R[0,:]) - 1))
+    for p in range(len(R[0,:])-1):
+        R[:,p,-1] = R[:,p,-1] / R[0,p,p]
+        R[:,p+1,-1] = R[:,p+1,-1] - np.sum(R[:,:p+1,p+1] * R[:,:p+1,-1], axis=1)
+        d[:,:,-1,:] = d[:,:,-1,:] - d[:,:,p,:] * R[None,:,p,-1,None]
+    R[:,-1,-1] = R[:,-1,-1] ** 0.5
+    d[:,:,-1,:] = d[:,:,-1,:] / R[None,:,-1,-1,None]
+    return R,d
+
 def eliminate_row(G,T,k,col,m):
     R = G[:]
     d = T[:]
@@ -36,15 +48,6 @@ def eliminate_row(G,T,k,col,m):
     GrT = Gr.transpose([0,2,1])
     d[:,:,col:m,0] = T[:,:,col:m,0] - T[:,:,k-1] * GrT[:,:,0]
     R[:,col:m,col:m] = G[:,col:m,col:m] - np.triu(np.matmul(GrT,Gr))
-    return R,d
-
-def finalize_column(R,d):
-    for p in range(len(R[0,:])-1):
-        R[:,p,-1] = R[:,p,-1] / R[0,p,p]
-        R[:,p+1,-1] = R[:,p+1,-1] - np.sum(R[:,:p+1,p+1] * R[:,:p+1,-1], axis=1)
-        d[:,:,-1,:] = d[:,:,-1,:] - d[:,:,p,:] * R[None,:,p,-1,None]
-    R[:,-1,-1] = R[:,-1,-1] ** 0.5
-    d[:,:,-1,:] = d[:,:,-1,:] / R[None,:,-1,-1,None]
     return R,d
 
 def finalize_row(G,T,k):
