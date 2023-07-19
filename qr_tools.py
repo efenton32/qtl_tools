@@ -18,13 +18,6 @@ def make_rd(G,T,R0=None,d0=None):
         d = T.copy()
         n = len(R[0,0,:]) - len(R0[0,0,:])
         k = len(R0[0,0,:])
-        print("n = {}".format(n))
-        print("k = {}".format(k))
-
-        # R[:,:-1,:-1] = R0[None,:,:]
-        # d[:,:,:-1] = d0[:,None,:]
-        # R,d = finalize_column(R,d)
-
         R[:,:-n,:-n] = R0[None,:,:]
         d[:,:,:-n] = d0[:,None,:]
         for i in range(k+1,k+n+1):
@@ -32,9 +25,8 @@ def make_rd(G,T,R0=None,d0=None):
     return R,d
 
 def finalize_column(R,d):
-    print("max p = {}".format(len(R[0,:]) - 1))
     for p in range(len(R[0,:])-1):
-        R[:,p,-1] = R[:,p,-1] / R[0,p,p]
+        R[:,p,-1] = R[:,p,-1] / R[:,p,p]
         R[:,p+1,-1] = R[:,p+1,-1] - np.sum(R[:,:p+1,p+1] * R[:,:p+1,-1], axis=1)
         d[:,:,-1,:] = d[:,:,-1,:] - d[:,:,p,:] * R[None,:,p,-1,None]
     R[:,-1,-1] = R[:,-1,-1] ** 0.5

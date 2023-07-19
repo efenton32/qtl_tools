@@ -21,6 +21,7 @@ class QTL_model:
             names [list of str]: Environment names, optional
             chr_edges [list of int]: SNP indices that define chromosome boundaries
         """
+        np.set_printoptions(suppress=True)
         t = time.time()
         if geno.shape[0] != pheno.shape[1]:
             raise ValueError("First dim of genotypes and 2nd dim of phenotypes must match")
@@ -137,8 +138,6 @@ class QTL_model:
         for q in range(1, self.step + 1):
             pos_sorted = np.sort(self.pos[1:self.step+1,0])
             chrom = np.searchsorted(self.chr_edges, self.pos[q], "right")[0] - 1
-            print("-------")
-            print(self.pos[q])
             edge_low = self.chr_edges[chrom]
             edge_high = self.chr_edges[chrom+1] - 1
             gap = np.where(pos_sorted == self.pos[q,0])[0]
@@ -160,9 +159,7 @@ class QTL_model:
             
             T[:,:,:,:] = self.T[:,None,:,:]
             T[:,:,q,:] = np.matmul(self.geno[:,bottom:top+1].T, self.pheno)
-            print(self.R[:,:q,:q].shape)
             R,d = qr.make_rd(G, T, R0 = self.R[:,:q,:q], d0 = self.d[:,:q,:])
-            # print(d.shape)
             S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
             S = np.array(S)
             S_tot = np.sum(S, axis = 0)
@@ -174,20 +171,21 @@ class QTL_model:
                 a = max(S_tot)
                 b = max(a - S_tot)
                 plt.plot(a - S_tot, label="Total benefit", color="black")
-                plt.plot([self.pos[q,0]-bottom, self.pos[q,0]-bottom], [0, b], "--", color="gray")
-                plt.plot([p, p], [0, b], "--", color="orchid")
+                plt.plot([self.pos[q,0]-bottom, self.pos[q,0]-bottom], [0, b], "--", color="gray", label="Original pos")
+                plt.plot([p, p], [0, b], "--", color="orchid", label = "New pos")
                 for i in range(self.num_env):
                     a = max(S[i])
                     plt.plot(a-S[i], label="Benefit " + self.names[i])
                 plt.xlabel("SNP index")
                 plt.ylabel("Cost function benefit")
+                plt.legend()
                 plt.tight_layout()
                 plt.savefig(self.path + str(self.step) + "q_{}.pdf".format(q))
                 plt.close()
 
             if p + bottom != self.pos[q,0]:
+                print("Step = {}".format(self.step))
                 print("QTL {} moved from {} to {}".format(q, self.pos[q,0], p + bottom))
-    
             self.T = T[:,p]
             self.G = G[None,p,:,:]
             self.d = d[:,p]
@@ -195,13 +193,8 @@ class QTL_model:
             del G, T, R, d
 
             self.pos[q,0] = p + bottom
-            print(p + bottom)
             self.S_tot[self.step] = S_tot[p]
-            print(self.S_tot[self.step])
-            # print(np.round(self.G[0]))
-            print(np.round(self.R[0]))
             self.S[self.step] = S[:,p]
-
 
     def dump_qtls(self, outfile):
         columns = [" " for i in range(len(self.names)+1)]
@@ -225,7 +218,6 @@ class QTL_model:
             R,d = qr.make_rd(G,T)
         else:
             R,d = qr.make_rd(G,T,self.R,self.d)
-
         S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
         S = np.array(S)
         S_tot = np.sum(S, axis = 0)
