@@ -134,6 +134,51 @@ class QTL_model:
             save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step+1)
             self.dump_qtls(self.outfile)
 
+    def add_qtl(self):
+        m = self.step + 1
+        t = time.time()
+        G = np.zeros((self.L, m, m))
+        G[:,0:-1,0:-1] = self.G[:,:,:]
+        G[:,-1,-1] = self.dots[:,0]
+        G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
+
+        T = np.zeros((self.num_env, self.L, m, 1))
+        T[:,:,0:-1,0] = self.T[:,:,:].transpose((0,2,1))
+        T[:,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno)
+        if self.step == 1:
+            R,d = qr.make_rd(G,T)
+        else:
+            R,d = qr.make_rd(G,T,self.R,self.d)
+        S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
+        S = np.array(S)
+        S_tot = np.sum(S, axis = 0)
+
+        #### Plot ####
+        if self.b_plots:
+            plt.figure()
+            plt.plot(self.S_tot[self.step-1] - S_tot, label="Total benefit", color="black")
+            for i in range(self.num_env):
+                plt.plot(self.S[self.step-1][i] - S[i], label="Benefit " + self.names[i])
+            plt.xlabel("SNP index")
+            plt.ylabel("Cost function benefit")
+            plt.tight_layout()
+            plt.savefig(self.path + str(m-1) + ".pdf")
+            plt.close()
+
+        #### Update variables for next iteration ####
+        S_tot[self.pos[:m-1]] = np.inf
+        p = np.nanargmin(S_tot)
+
+        self.T = T[:,p]
+        self.G = G[None,p,:,:]
+        self.d = d[:,p]
+        self.R = R[None,p,:,:]
+        del G, T, R, d
+
+        self.pos[m-1] = p
+        self.S_tot[self.step] = S_tot[p]
+        self.S[self.step] = S[:,p]
+
     def refit_pos(self):
         for q in range(1, self.step + 1):
             pos_sorted = np.sort(self.pos[1:self.step+1,0])
@@ -203,62 +248,10 @@ class QTL_model:
         df = pd.DataFrame(self.s_vals, index=self.pos[:self.step+1,0], columns=self.names)
         df.to_csv(outfile, sep="\t")
 
-    def add_qtl(self):
-        m = self.step + 1
-        t = time.time()
-        G = np.zeros((self.L, m, m))
-        G[:,0:-1,0:-1] = self.G[:,:,:]
-        G[:,-1,-1] = self.dots[:,0]
-        G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
-
-        T = np.zeros((self.num_env, self.L, m, 1))
-        T[:,:,0:-1,0] = self.T[:,:,:].transpose((0,2,1))
-        T[:,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno)
-        if self.step == 1:
-            R,d = qr.make_rd(G,T)
-        else:
-            R,d = qr.make_rd(G,T,self.R,self.d)
-        S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
-        S = np.array(S)
-        S_tot = np.sum(S, axis = 0)
-
-        #### Plot ####
-        if self.b_plots:
-            plt.figure()
-            plt.plot(self.S_tot[self.step-1] - S_tot, label="Total benefit", color="black")
-            for i in range(self.num_env):
-                plt.plot(self.S[self.step-1][i] - S[i], label="Benefit " + self.names[i])
-            # plt.legend()
-            # plt.ylim(0, 320)
-            plt.xlabel("SNP index")
-            plt.ylabel("Cost function benefit")
-            plt.tight_layout()
-            plt.savefig(self.path + str(m-1) + ".pdf")
-            plt.close()
-
-        #### Update variables for next iteration ####
-        S_tot[self.pos[:m-1]] = np.inf
-        p = np.nanargmin(S_tot)
-
-        self.T = T[:,p]
-        self.G = G[None,p,:,:]
-        self.d = d[:,p]
-        self.R = R[None,p,:,:]
-        del G, T, R, d
-
-        self.pos[m-1] = p
-        self.S_tot[self.step] = S_tot[p]
-        self.S[self.step] = S[:,p]
-
     def generate_s_vals(self):
         self.s_vals = np.zeros((self.step+1, self.num_env))
         R_inv = linalg.inv(self.R)
         self.s_vals[:,:] = np.matmul(R_inv,self.d).transpose((1,0,2))[:,:,0]
-
-    def back_eliminate(self):
-        self.elim_step = self.step - 1
-        while self.elim_step > 1:
-            self.remove_qtl()
 
     def remove_qtl(self):
         self.pos.append(np.zeros([self.elim_step, self.num_env]).astype('int'))
@@ -313,170 +306,3 @@ class QTL_model:
                 self.pred_err[env, model] = np.linalg.norm( v_pheno[env] - calc )
 
 
-################################################################################
-
-# Below are old functions that I've either incorporated already or plan to
-# incorporate in the future
-
-################################################################################
-
-
-def refit(geno,X,G,pos,b,b_explained):
-    N = len(geno[:,0])
-    b_temp = np.matmul(geno[:,pos],X)
-    b0 = b - b_explained + b_temp
-    T = np.matmul(geno[:,pos].T,b0)
-
-    R,d = qr.make_rd(np.array([G]),np.array([T]))
-    R_inv = linalg.inv(R[0])
-    X = np.matmul(R_inv,d[0])
-    meas = np.matmul(geno[:,pos],X)
-    # plt.figure()
-    # plt.plot(b,b_explained,'.',label='old')
-    b_explained = b_explained - b_temp + meas
-    # plt.plot(b,b_explained,'.',label='new')
-    # plt.legend()
-    # plt.show()
-    S = linalg.norm(b - b_explained)
-
-    return X,S,T,b0,b_explained,meas
-
-################################################################################
-
-def qr_step(geno,X0,S0,T0,G0,pos0,b0):
-    m = len(X0)+1
-    N = len(geno[:,0])
-    L = len(geno[0,:])
-
-    G = np.zeros([L,m,m])
-    T = np.zeros([L,m,1])
-    pos = np.zeros([m],dtype='int')
-    G[:,0:-1,0:-1] = G0[:,:]
-    G[:,-1,-1] = np.sum(geno*geno,axis=0)
-    G[:,range(m-1),-1] = np.matmul(geno[:,:].T,geno[:,pos0])
-    T[:,range(m-1),0] = T0[:,0]
-    T[:,-1,:] = np.matmul(geno[:,:].T,b0)
-
-    R,d = qr.make_rd(G,T)
-
-    R_inv = linalg.inv(R)
-    X = np.matmul(R_inv,d)
-
-    meas = np.matmul(geno[:,pos0],X[:,0:-1,0].T) + geno[:,:]*X[:,-1,0]
-    S = linalg.norm(b0 - meas,axis=0)
-    S[pos0] = np.inf
-
-    # plt.figure()
-    # plt.plot(S**2/N)
-    # plt.plot(pos0,S[pos0+1]**2/N,'.')
-    # plt.show()
-
-
-    p = np.nanargmin(S)
-    X = X[p]
-    S = S[p]
-    T = T[p]
-    G = G[p]
-
-    pos[0:-1] = pos0
-    pos[-1] = p
-    return X,S,T,G,pos
-
-################################################################################
-
-def jitter(geno,X0,S0,T0,G0,pos,b):
-
-    k = len(pos)
-    index = 0
-    counter = 1
-    dir = 'r'
-    N = len(geno[:,0])
-
-    G0 = np.array([G0])
-    T0 = np.array([T0])
-    G = np.zeros(G0.shape)
-    T = np.zeros(T0.shape)
-
-    while counter < k:
-
-        while dir == 'r':
-            G[0,:,:] = G0[:,:]
-            T[0,:] = T0[:]
-            p_temp = pos[index]+1
-
-            if pos[index]==len(geno[0,:])-1 or pos[index]==0 or p_temp in pos:
-                X = X0
-                S = np.inf
-                T = T0
-                G = G0
-
-            else:
-                A = geno[:,pos]
-                thing = np.dot(geno[:,p_temp],A)
-
-                G[0,0:index,index] = thing[0:index]
-                G[0,index,index+1:] = thing[index+1:]
-                T[0,index] = np.matmul(geno[:,p_temp],b)
-
-                R,d = qr.make_rd(G,T)
-                R_inv = linalg.inv(R)
-                X = np.matmul(R_inv,d)[0]
-
-                meas = np.dot(geno[:,pos[range(index)]],X[range(index)])
-                meas = meas + np.array([geno[:,p_temp]*X[index]]).T
-                meas = meas + np.dot(geno[:,pos[index+1:]],X[index+1:])
-
-                S = linalg.norm(meas-b)
-
-            if S < S0:
-                X0 = X
-                S0 = S
-                T0 = T
-                G0 = G
-                counter = 0
-                pos[index] = pos[index] + 1
-                print('Position '+str(pos[index]-1)+' moved 1 right')
-            else:
-                dir = 'l'
-
-        while dir == 'l':
-            G[:,:] = G0[:,:]
-            T[:] = T0[:]
-            p_temp = pos[index]-1
-
-            if pos[index]==len(geno[0,:])-1 or pos[index]==0 or p_temp in pos:
-                X = X0
-                S = np.inf
-                T = T0
-                G = G0
-
-            else:
-                A = geno[:,pos]
-                thing = np.dot(geno[:,p_temp],A)
-
-                G[0,0:index,index] = thing[0:index]
-                G[0,index,index+1:] = thing[index+1:]
-                T[0,index] = np.matmul(geno[:,p_temp],b)
-
-                R,d = qr.make_rd(G,T)
-                X = np.matmul(R,d)[0]
-
-                meas = np.dot(geno[:,pos[range(index)]],X[range(index)])
-                meas = meas + np.array([geno[:,p_temp]*X[index]]).T
-                meas = meas + np.dot(geno[:,pos[index+1:]],X[index+1:])
-
-                S = linalg.norm(meas-b)
-
-            if S < S0:
-                X0 = X
-                S0 = S
-                T0 = T
-                G0 = G
-                counter = 0
-                pos[index] = pos[index] - 1
-                print('Position '+str(pos[index]+1)+' moved 1 left')
-            else:
-                dir = 'r'
-                counter+=1
-
-    return X0,S0,T0[0],G0[0],pos
