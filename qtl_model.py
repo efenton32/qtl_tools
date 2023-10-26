@@ -5,10 +5,10 @@ import qr_tools as qr
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import json
 
 class QTL_model:
-
-    def __init__(self, pheno, geno, names = None,
+    def __init__(self, pheno, geno, names = None, samps = None,
                  chr_edges = [0, 995, 4730, 5288, 9323, 11182, 12470, 16401, 18039, 20117, 23091, 26330, 
                               30640, 33585, 35384, 39673, 41594]
     ):
@@ -23,6 +23,9 @@ class QTL_model:
         """
         np.set_printoptions(suppress=True)
         t = time.time()
+        if type(geno) == str:
+            geno = np.load(geno)
+            geno = geno[samps,:]
         if geno.shape[0] != pheno.shape[1]:
             raise ValueError("First dim of genotypes and 2nd dim of phenotypes must match")
         self.pheno = pheno[:,:,None]
@@ -49,7 +52,8 @@ class QTL_model:
             self.names = np.arange(self.num_env).astype("str")
         print("Initialize: {}".format(round(time.time() - t)))
 
-    def run(self, num_qtl = 20, refit = None, b_plots = False, path = None, b_save_itm = False, outfile = None):
+    def run(self, num_qtl=20, refit=None, b_plots=False, plot_path=None, b_save_itm=False, outfile=None, statfile=None,
+            corr_cutoff = 0):
         """
         Perform the forward-search algorithm
 
@@ -63,19 +67,21 @@ class QTL_model:
         # Make the directory for saving plots if it doesn't already exist
         if b_plots:
             try:
-                os.mkdir(path)
+                os.mkdir(plot_path)
             except FileExistsError:
                 pass
         t = time.time()
         # S0 represents the loss function, or the squared residuals. With a blank model, the residuals
         # are just the phenotypes squared
-        self.S0 = np.sum(self.pheno**2, axis=1)**0.5
+        self.corr_cutoff = corr_cutoff
+        self.S0 = np.sum(self.pheno**2, axis=1)
         self.b_plots = b_plots
-        self.path = path
+        self.plot_path = plot_path
         self.b_save_itm = b_save_itm
         self.outfile = outfile
         self.num_qtl = num_qtl
         self.refit = refit
+        self.statfile = statfile
         # Stores the summed squared residuals in every environment at every step
         self.S = np.zeros((self.num_qtl + 1, self.num_env))
         # Stores the summed squared residuals, summed across environments at every step. This is the
@@ -103,16 +109,12 @@ class QTL_model:
         while self.step < self.num_qtl + 1:
             t = time.time()
             self.qtl_step()
-            if self.refit is not None:
-                if self.step % self.refit == 0:
-                    self.refit_pos()
             print()
             print("Step {}: {}".format(self.step, round(time.time() - t)))
             self.step += 1
         self.step -= 1
         self.generate_s_vals()
         self.step += 1
-        # self.calculate_CIs()
 
     def add_first(self):
         """
@@ -129,10 +131,26 @@ class QTL_model:
 
     def qtl_step(self):
         self.add_qtl()
-        if self.b_save_itm and self.step % 10 == 0:
+        if self.refit is not None:
+            if self.step % self.refit == 0:
+                self.refit_pos()
+        # if self.b_save_itm and self.step % 10 == 0:
+        #     self.generate_s_vals()
+        #     save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step+1)
+        #     self.dump_qtls(self.outfile)
+        if self.statfile is not None:
             self.generate_s_vals()
-            save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step+1)
-            self.dump_qtls(self.outfile)
+            save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step)
+            self.dump_qtls(save_name)
+            self.dump_stats()
+
+    def dump_stats(self):
+        with open(self.statfile, "a") as sf:
+            self.generate_s_vals()
+            sf.write(json.dumps(
+                {"step": self.step, "pos": self.pos[:self.step+1,0].tolist(), "loss": float(self.S_tot[self.step,0])}
+            ))
+            sf.write("\n")
 
     def add_qtl(self):
         m = self.step + 1
@@ -149,9 +167,10 @@ class QTL_model:
             R,d = qr.make_rd(G,T)
         else:
             R,d = qr.make_rd(G,T,self.R,self.d)
-        S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
+        S = self.S0 - np.sum(d**2, axis=2)[:,:,0]
         S = np.array(S)
         S_tot = np.sum(S, axis = 0)
+        S_tot[R[:,-1,-1] < self.corr_cutoff] = np.inf
 
         #### Plot ####
         if self.b_plots:
@@ -162,13 +181,16 @@ class QTL_model:
             plt.xlabel("SNP index")
             plt.ylabel("Cost function benefit")
             plt.tight_layout()
-            plt.savefig(self.path + str(m-1) + ".pdf")
+            plt.savefig(self.plot_path + str(m-1) + ".pdf")
             plt.close()
 
         #### Update variables for next iteration ####
         S_tot[self.pos[:m-1]] = np.inf
         p = np.nanargmin(S_tot)
 
+        print("Step: {}".format(self.step))
+        print("R: {}".format(R[p,-1,-1]))
+        print("p: {}".format(p))
         self.T = T[:,p]
         self.G = G[None,p,:,:]
         self.d = d[:,p]
@@ -205,9 +227,10 @@ class QTL_model:
             T[:,:,:,:] = self.T[:,None,:,:]
             T[:,:,q,:] = np.matmul(self.geno[:,bottom:top+1].T, self.pheno)
             R,d = qr.make_rd(G, T, R0 = self.R[:,:q,:q], d0 = self.d[:,:q,:])
-            S = self.S0**2 - np.sum(d**2, axis=2)[:,:,0]
+            S = self.S0 - np.sum(d**2, axis=2)[:,:,0]
             S = np.array(S)
             S_tot = np.sum(S, axis = 0)
+            S_tot[np.min(np.diagonal(R, axis1=1, axis2=2),axis=1) < self.corr_cutoff] = np.inf
             p = np.nanargmin(S_tot)
 
             #### Plot ####
@@ -223,14 +246,14 @@ class QTL_model:
                     plt.plot(a-S[i], label="Benefit " + self.names[i])
                 plt.xlabel("SNP index")
                 plt.ylabel("Cost function benefit")
-                plt.legend()
                 plt.tight_layout()
-                plt.savefig(self.path + str(self.step) + "q_{}.pdf".format(q))
+                plt.savefig(self.plot_path + str(self.step) + "q_{}.pdf".format(q))
                 plt.close()
 
             if p + bottom != self.pos[q,0]:
                 print("Step = {}".format(self.step))
                 print("QTL {} moved from {} to {}".format(q, self.pos[q,0], p + bottom))
+                print("R: {}".format(R[p,-1,-1]))
             self.T = T[:,p]
             self.G = G[None,p,:,:]
             self.d = d[:,p]
@@ -305,4 +328,16 @@ class QTL_model:
                 calc = np.matmul( v_geno[env][:, self.pos[model][:,env]], self.s_vals[model][:,env] )
                 self.pred_err[env, model] = np.linalg.norm( v_pheno[env] - calc )
 
+
+def validate(pheno, geno, qtls, return_pred=False):
+    if np.min(geno) >= 0:
+        geno = geno*2 - 1
+    geno = np.hstack( [geno, np.ones((geno.shape[0],1))] )
+    pred = np.matmul(geno[:,qtls.index], qtls.to_numpy())
+    S = np.nansum((pred - pheno.T)**2, axis=0)
+    S_tot = np.sum(S)
+    if return_pred:
+        return S, S_tot, pred.T
+    else:
+        return S, S_tot
 
