@@ -127,6 +127,8 @@ class QTL_model:
 
         self.T[:,0,0] = np.sum(self.geno[:,self.pos[0]]*self.pheno[:,:,0].T, axis = 0)
         self.G[0,0,0] = np.sum(self.geno[:,self.pos[0]]*self.geno[:,self.pos[0]])
+        self.R = self.G ** 0.5
+        self.d = self.T / self.R
         self.step += 1
 
     def qtl_step(self):
@@ -155,22 +157,19 @@ class QTL_model:
     def add_qtl(self):
         m = self.step + 1
         t = time.time()
-        G = np.zeros((self.L, m, m))
-        G[:,0:-1,0:-1] = self.G[:,:,:]
-        G[:,-1,-1] = self.dots[:,0]
-        G[:,0:-1,-1] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
 
-        T = np.zeros((self.num_env, self.L, m, 1))
-        T[:,:,0:-1,0] = self.T[:,:,:].transpose((0,2,1))
-        T[:,:,-1,:] = np.matmul(self.geno[:,:].T,self.pheno)
-        if self.step == 1:
-            R,d = qr.make_rd(G,T)
-        else:
-            R,d = qr.make_rd(G,T,self.R,self.d)
-        S = self.S0 - np.sum(d**2, axis=2)[:,:,0]
-        S = np.array(S)
+        G_c = np.zeros((self.L, m, 1))
+        G_c[:,-1,0] = self.dots[:,0]
+        G_c[:,:-1,0] = np.matmul(self.geno[:,:].T, self.geno[:,self.pos[:m-1,0]])
+
+        T_c = np.zeros((self.num_env, self.L, 1, 1))
+        T_c[:,:,0,:] = np.matmul(self.geno[:,:].T, self.pheno)
+
+        R_c,d_c = qr.make_rd_compact(G_c.copy(), T_c.copy(), self.R, self.d)
+
+        S = self.S0 - (np.sum(self.d**2, axis=1) + d_c[:,:,0,0]**2)
         S_tot = np.sum(S, axis = 0)
-        S_tot[R[:,-1,-1] < self.corr_cutoff] = np.inf
+        S_tot[R_c[:,-1,-1] < self.corr_cutoff] = np.inf
 
         #### Plot ####
         if self.b_plots:
@@ -189,13 +188,19 @@ class QTL_model:
         p = np.nanargmin(S_tot)
 
         print("Step: {}".format(self.step))
-        print("R: {}".format(R[p,-1,-1]))
+        print("R: {}".format(R_c[p,-1,-1]))
         print("p: {}".format(p))
-        self.T = T[:,p]
-        self.G = G[None,p,:,:]
-        self.d = d[:,p]
-        self.R = R[None,p,:,:]
-        del G, T, R, d
+        self.T = np.append(self.T, T_c[:,p,:,:], axis=1)
+        self.d = np.append(self.d, d_c[:,p,:,:], axis=1)
+        G_new = np.zeros((1,self.step+1,self.step+1))
+        G_new[0,:-1,:-1] = self.G[0,:,:]
+        G_new[0,:,-1,None] = G_c[p,:,:]
+        self.G = G_new.copy()
+        R_new = np.zeros((1,self.step+1,self.step+1))
+        R_new[0,:-1,:-1] = self.R[0,:,:]
+        R_new[0,:,-1,None] = R_c[p,:,:]
+        self.R = R_new.copy()
+        del G_c, T_c, R_c, d_c, G_new, R_new
 
         self.pos[m-1] = p
         self.S_tot[self.step] = S_tot[p]
