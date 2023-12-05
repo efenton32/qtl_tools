@@ -58,15 +58,15 @@ def eliminate_row(G,T,k,col,m):
     d = T[:]
     Gr = np.array([G[:,k-1,col:m]]).transpose([1,0,2])
     GrT = Gr.transpose([0,2,1])
-    d[:,:,col:m,0] = T[:,:,col:m,0] - T[:,:,k-1] * GrT[:,:,0]
+    d[:,col:m,0] = T[:,col:m,0] - T[:,k-1,:] * GrT[:,:,0]
     R[:,col:m,col:m] = G[:,col:m,col:m] - np.triu(np.matmul(GrT,Gr))
     return R,d
 
 def finalize_row(G,T,k):
-    R = G[:]
-    d = T[:]
+    R = G.copy()
+    d = T.copy()
     w = np.abs(G[:,k,k])**.5
     R[:,k,:] = (G[:,k,:]/w[:,None])
-    d[:,:,k] = (T[:,:,k,:]/w[None,:,None])
+    d[:,k,:] = (T[:,k,:]/w[None,:,None])
     return R,d
 
