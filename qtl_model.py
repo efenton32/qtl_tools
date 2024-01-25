@@ -186,7 +186,6 @@ class QTL_model:
 
     def resume(self, num_qtl=20, refit=None, b_plots=False, plot_path=None, b_save_itm=False, outfile=None,
                statfile=None, corr_cutoff=0):
-
         t = time.time()
 
         self.corr_cutoff = corr_cutoff
@@ -195,27 +194,44 @@ class QTL_model:
         self.plot_path = plot_path
         self.b_save_itm = b_save_itm
         self.outfile = outfile
-        self.num_qtl = num_qtl
+        if self.epistatic:
+            self.num_e_qtl = num_qtl
+        else:
+            self.num_qtl = num_qtl
         self.refit = refit
         self.statfile = statfile
-        self.epistatic = False
 
-        self.S = np.zeros((self.num_qtl + 1, self.num_env))
-        self.S_tot = np.zeros((self.num_qtl + 1, 1))
+        if self.epistatic:
+            self.S = np.zeros((self.num_e_qtl + self.step + 1, self.num_env))
+            self.S_tot = np.zeros((self.num_e_qtl + self.step + 1, 1))
+        else:
+            self.S = np.zeros((self.num_qtl + 1, self.num_env))
+            self.S_tot = np.zeros((self.num_qtl + 1, 1))
 
         self.S[:self.step+1,:] = (self.S0[:,None,:] - np.cumsum(self.d**2, axis=1))[:,:,0].transpose((1,0))
         self.S_tot = np.sum(self.S, axis=1)[:,None]
         x = self.pos.copy()
-        self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
+        if self.epistatic:
+            self.pos = np.zeros((len(self.pos) + self.num_e_qtl, 1)).astype("int")
+        else:
+            self.pos = np.zeros((self.num_qtl + 1, 1)).astype("int")
         self.pos[:self.step+1,0] = x.copy()
         self.step += 1
         del x
-        while self.step < self.num_qtl + 1:
-            t = time.time()
-            self.qtl_step()
-            print()
-            print("Step {}: {}".format(self.step, round(time.time() - t)))
-            self.step += 1
+        if self.epistatic:
+            while self.step < self.num_e_qtl + len(self.add_pos):
+                t = time.time()
+                self.qtl_step()
+                print()
+                print("Step {}: {}".format(self.step, round(time.time() - t)))
+                self.step += 1
+        else:
+            while self.step < self.num_qtl + 1:
+                t = time.time()
+                self.qtl_step()
+                print()
+                print("Epistasis step {}: {}".format(self.step, round(time.time() - t)))
+                self.step += 1
         self.step -= 1
         self.generate_s_vals()
         self.step += 1
@@ -227,7 +243,10 @@ class QTL_model:
                 self.refit_pos()
         if self.statfile is not None:
             self.generate_s_vals()
-            save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step)
+            if self.epistatic:
+                save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step - len(self.add_pos))
+            else:
+                save_name = self.outfile.split(".")[0] + "_step_{}.csv".format(self.step)
             self.dump_qtls(save_name)
             self.dump_stats()
 
@@ -355,13 +374,14 @@ class QTL_model:
 
     def dump_qtls(self, outfile):
         if self.epistatic:
-            x = (self.pos[len(self.add_pos):] - len(self.add_pos))[:self.step+1,0]
-            print(self.add_pos)
-            print(x)
-            print(self.e_loci[x])
-            loci = np.hstack([self.add_pos, self.e_loci[x]])
-            print(loci)
-            df = pd.DataFrame(self.s_vals, index=x, columns=self.names)
+            print(self.pos.shape)
+            x = (self.pos[len(self.add_pos):self.step+1] - len(self.add_pos))[:,0]
+            idxs = []
+            for p in self.add_pos:
+                idxs.append(p)
+            for p in np.array(self.e_loci)[x]:
+                idxs.append(p)
+            df = pd.DataFrame(self.s_vals, index=idxs, columns=self.names)
             df.to_csv(outfile, sep="\t")
         else:
             df = pd.DataFrame(self.s_vals, index=self.pos[:self.step+1,0], columns=self.names)
@@ -372,22 +392,52 @@ class QTL_model:
         R_inv = linalg.inv(self.R)
         self.s_vals[:,:] = np.matmul(R_inv,self.d).transpose((1,0,2))[:,:,0]
 
-    def load_model(self, pos):
-        self.pos = np.array(pos).astype("int")
-        self.step = len(pos) - 1
-        m = self.step + 1
-        self.G = np.zeros([1,m,m])
-        self.G = np.triu(np.matmul(self.geno[:,pos].T, self.geno[:,pos]))[None,:,:]
-        self.T = np.zeros([self.num_env,m])
-        self.T = np.sum(self.geno[None,:,pos] * self.pheno, axis=1)[:,:,None]
-        self.T = np.matmul(self.pheno[:,:,0], self.geno[:,pos])[:,:,None]
-        self.R, self.d = qr.make_rd(self.G.copy(), self.T.copy())
+    def load_model(self, pos, epistatic_pos=None):
+        if epistatic_pos is None:
+            self.epistatic = False
+            self.pos = np.array(pos).astype("int")
+            self.step = len(pos) - 1
+            m = self.step + 1
+        else:
+            self.epistatic = True
+            pos = np.array(pos).astype("int")
+            self.step = len(epistatic_pos) + len(pos) - 1
+            m = self.step + 1
+            self.e_loci = list(combinations(pos[1:], 2))
+            self.geno = np.hstack( [self.geno[:,pos], np.prod(self.geno[:,self.e_loci], axis = 2)])
+            self.add_pos = pos.copy()
+            self.pos = np.arange(len(pos) + len(epistatic_pos))
+            for i, ep in enumerate(epistatic_pos):
+                linear_loci = ep.strip("[] ").split()
+                itm1 = np.where(pos == int(linear_loci[0]))[0][0]
+                itm2 = np.where(pos == int(linear_loci[1]))[0][0]
+                self.pos[i+len(pos)] = len(pos) + len(pos)*(itm1-1) + itm2 - itm1 - sum(np.arange(itm1) + 1)
+            self.G = np.zeros([1,m,m])
+            self.G = np.triu(np.matmul(self.geno[:,self.pos].T, self.geno[:,self.pos]))[None,:,:]
+            self.T = np.zeros([self.num_env,m])
+            self.T = np.sum(self.geno[None,:,self.pos] * self.pheno, axis=1)[:,:,None]
+            self.T = np.matmul(self.pheno[:,:,0], self.geno[:,self.pos])[:,:,None]
+            self.R, self.d = qr.make_rd(self.G.copy(), self.T.copy())
+            self.L = self.geno.shape[1]
+            self.dots = np.sum(self.geno*self.geno, axis = 0)[:,None]
+            self.pos = self.pos[:,None]
 
-def validate(pheno, geno, qtls, return_pred=False):
+def validate(pheno, geno, qtls, return_pred=False, epistatic=False):
     if np.min(geno) >= 0:
         geno = geno*2 - 1
-    geno = np.hstack( [geno, np.ones((geno.shape[0],1))] )
-    pred = np.matmul(geno[:,qtls.index], qtls.to_numpy())
+    if not epistatic:
+        model_geno = np.hstack( [ np.ones((geno.shape[0],1)), geno[:,qtls.index[1:]] ] )
+    else:
+        model_geno = [ np.ones((geno.shape[0],1)) ]
+        for i in qtls.index[1:]:
+            try:
+                model_geno.append(geno[:,int(i),None])
+            except:
+                i = np.array(i.strip("[] ").split()).astype("int")
+                v = np.prod(geno[:,i], axis=1)
+                model_geno.append(v[:,None])
+        model_geno = np.hstack(model_geno)
+    pred = np.matmul(model_geno, qtls.to_numpy())
     S = np.nansum((pred - pheno.T)**2, axis=0)
     S_tot = np.sum(S)
     if return_pred:
