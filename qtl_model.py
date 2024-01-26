@@ -423,6 +423,12 @@ class QTL_model:
             self.pos = self.pos[:,None]
 
 def validate(pheno, geno, qtls, return_pred=False, epistatic=False):
+    """
+    Calculates SSR and optionally predicted phenotypes from a QTL model
+
+    
+
+    """
     if np.min(geno) >= 0:
         geno = geno*2 - 1
     if not epistatic:
