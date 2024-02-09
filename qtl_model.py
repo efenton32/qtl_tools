@@ -119,7 +119,7 @@ class QTL_model:
         self.dump_qtls(self.outfile)
         self.step += 1
 
-    def run_epistasis(self, num_e_qtl=400, b_plots=False, plot_path=None, b_save_itm=False,
+    def run_epistasis(self, num_qtl=400, b_plots=False, plot_path=None, b_save_itm=False,
                       outfile=None, statfile=None):
         """
         Finds epistatic loci from a fit additive model. Only considers interactions between additive QTLs, not
@@ -134,7 +134,7 @@ class QTL_model:
         self.plot_path = plot_path
         self.b_save_itm = b_save_itm
         self.outfile = outfile
-        self.num_e_qtl = num_e_qtl
+        self.num_e_qtl = num_qtl
         self.statfile = statfile
         self.refit = None
         self.corr_cutoff = 0
